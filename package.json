@@ -1,0 +1,16 @@
+{
+  "name": "savanna-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Automação controlada de um único post do Instagram com Playwright.",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "playwright": "^1.55.0"
+  }
+}

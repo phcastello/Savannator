@@ -1,0 +1,6 @@
+node_modules/
+profiles/
+
+# Arquivos locais comuns
+.DS_Store
+*.log
