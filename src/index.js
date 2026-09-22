@@ -1,39 +1,17 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
+import { parseCliArgs, printUsage } from "./cli.js";
+
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+function validateCommentConfig({
   ACTION_LIMIT,
   COMMENT_TEXTS,
   GIF_SEARCH_TERMS,
   INTERVAL_MS,
   RATE_LIMIT_FALLBACK_MS,
   TARGET_POST,
-} from "../config.js";
-import {
-  getMainPage,
-  hasCompletedInitialLogin,
-  launchBrowser,
-  markInitialLoginComplete,
-} from "./browser.js";
-import { parseCliArgs, printUsage } from "./cli.js";
-import {
-  AuthenticationRequiredError,
-  ensureLoggedIn,
-  isOnTargetPost,
-  isLoggedIn,
-  openInstagramHome,
-  openTargetPost,
-  performCommentAction,
-  RateLimitError,
-} from "./instagram.js";
-import {
-  acquireProfileLock,
-  ProfileInUseError,
-} from "./profile-lock.js";
-import { runScheduler } from "./scheduler.js";
-
-const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-
-function validateConfig() {
+}) {
   const target = new URL(TARGET_POST);
 
   if (target.hostname !== "www.instagram.com" || !target.pathname.startsWith("/p/")) {
@@ -64,13 +42,43 @@ function validateConfig() {
   }
 }
 
-async function main() {
-  let profile;
-  let show;
+async function runCommentMode({ profile, show }) {
+  const [config, browser, instagram, profileLockModule, scheduler] =
+    await Promise.all([
+      import("../config.js"),
+      import("./browser.js"),
+      import("./instagram.js"),
+      import("./profile-lock.js"),
+      import("./scheduler.js"),
+    ]);
+
+  const {
+    ACTION_LIMIT,
+    INTERVAL_MS,
+    RATE_LIMIT_FALLBACK_MS,
+    TARGET_POST,
+  } = config;
+  const {
+    getMainPage,
+    hasCompletedInitialLogin,
+    launchBrowser,
+    markInitialLoginComplete,
+  } = browser;
+  const {
+    AuthenticationRequiredError,
+    ensureLoggedIn,
+    isOnTargetPost,
+    isLoggedIn,
+    openInstagramHome,
+    openTargetPost,
+    performCommentAction,
+    RateLimitError,
+  } = instagram;
+  const { acquireProfileLock, ProfileInUseError } = profileLockModule;
+  const { runScheduler } = scheduler;
 
   try {
-    ({ profile, show } = parseCliArgs(process.argv.slice(2)));
-    validateConfig();
+    validateCommentConfig(config);
   } catch (error) {
     console.error(error.message);
     printUsage();
@@ -269,6 +277,32 @@ async function main() {
       console.error(`Não foi possível remover o lock: ${error.message}`);
       process.exitCode = 1;
     });
+  }
+}
+
+async function main() {
+  let options;
+
+  try {
+    options = parseCliArgs(process.argv.slice(2));
+  } catch (error) {
+    console.error(error.message);
+    printUsage();
+    process.exitCode = 1;
+    return;
+  }
+
+  try {
+    if (options.mode === "reply") {
+      const { runReplyMode } = await import("./reply-mode.js");
+      await runReplyMode();
+      return;
+    }
+
+    await runCommentMode(options);
+  } catch (error) {
+    console.error(`Erro: ${error instanceof Error ? error.message : error}`);
+    process.exitCode = 1;
   }
 }
 
