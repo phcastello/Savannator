@@ -5,6 +5,7 @@ import {
   COMMENT_TEXTS,
   GIF_SEARCH_TERMS,
   INTERVAL_MS,
+  RATE_LIMIT_FALLBACK_MS,
   TARGET_POST,
 } from "../config.js";
 import {
@@ -17,10 +18,12 @@ import { parseCliArgs, printUsage } from "./cli.js";
 import {
   AuthenticationRequiredError,
   ensureLoggedIn,
+  isOnTargetPost,
   isLoggedIn,
   openInstagramHome,
   openTargetPost,
   performCommentAction,
+  RateLimitError,
 } from "./instagram.js";
 import {
   acquireProfileLock,
@@ -41,6 +44,9 @@ function validateConfig() {
   }
   if (!Number.isInteger(ACTION_LIMIT) || ACTION_LIMIT <= 0) {
     throw new Error("ACTION_LIMIT deve ser um inteiro maior que zero.");
+  }
+  if (!Number.isFinite(RATE_LIMIT_FALLBACK_MS) || RATE_LIMIT_FALLBACK_MS <= 0) {
+    throw new Error("RATE_LIMIT_FALLBACK_MS deve ser maior que zero.");
   }
   if (!Array.isArray(GIF_SEARCH_TERMS) || GIF_SEARCH_TERMS.length === 0) {
     throw new Error("GIF_SEARCH_TERMS precisa ter pelo menos um termo.");
@@ -76,6 +82,7 @@ async function main() {
   let profileLock;
   let context;
   let page;
+  let targetNeedsNavigation = false;
   let shuttingDown = false;
   let showModeAnnounced = false;
   const controller = new AbortController();
@@ -185,23 +192,38 @@ async function main() {
     const firstRun = !(await hasCompletedInitialLogin(profileDir));
     if (!(await startAuthenticatedHeadlessBrowser({ firstRun }))) return;
 
-    const openTargetWithAuthentication = async () => {
+    const ensureTargetPost = async () => {
+      if (!targetNeedsNavigation && isOnTargetPost(page)) return true;
+
+      targetNeedsNavigation = true;
+
       try {
         await openTargetPost(page);
+        targetNeedsNavigation = false;
       } catch (error) {
+        if (error instanceof RateLimitError) throw error;
         if (!(error instanceof AuthenticationRequiredError)) throw error;
 
         if (!(await startAuthenticatedHeadlessBrowser())) {
           if (controller.signal.aborted) return false;
           throw new Error("A reautenticação não foi concluída.");
         }
-        await openTargetPost(page);
+        if (!isOnTargetPost(page)) {
+          await openTargetPost(page);
+        }
+        targetNeedsNavigation = false;
       }
 
       return true;
     };
 
-    if (!(await openTargetWithAuthentication())) return;
+    let pendingRateLimit;
+    try {
+      if (!(await ensureTargetPost())) return;
+    } catch (error) {
+      if (!(error instanceof RateLimitError)) throw error;
+      pendingRateLimit = error;
+    }
     console.log(`Post:\n${TARGET_POST}`);
 
     await runScheduler({
@@ -209,6 +231,12 @@ async function main() {
       actionLimit: ACTION_LIMIT,
       signal: controller.signal,
       action: async () => {
+        if (pendingRateLimit) {
+          const error = pendingRateLimit;
+          pendingRateLimit = undefined;
+          throw error;
+        }
+
         if (!(await isLoggedIn(page))) {
           if (!(await startAuthenticatedHeadlessBrowser())) {
             if (controller.signal.aborted) return;
@@ -216,7 +244,7 @@ async function main() {
           }
         }
 
-        if (!(await openTargetWithAuthentication())) return;
+        if (!(await ensureTargetPost())) return;
 
         await performCommentAction(page, { debug: show });
       },

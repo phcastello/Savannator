@@ -19,6 +19,7 @@ Edite [`config.js`](./config.js) antes de executar:
 export const TARGET_POST = "https://www.instagram.com/p/DdQepCPEauI/";
 export const INTERVAL_MS = 120_000;
 export const ACTION_LIMIT = 5;
+export const RATE_LIMIT_FALLBACK_MS = 15 * 60 * 1000;
 export const COMMENT_TEXTS = ["👏", "🔥", "Muito bom!", "Boraaaa "];
 export const GIF_SEARCH_TERMS = ["party", "celebration", "dance", "funny"];
 ```

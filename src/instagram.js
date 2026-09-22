@@ -1,6 +1,7 @@
 import {
   COMMENT_TEXTS,
   GIF_SEARCH_TERMS,
+  RATE_LIMIT_FALLBACK_MS,
   TARGET_POST,
 } from "../config.js";
 
@@ -23,6 +24,15 @@ export class AuthenticationRequiredError extends Error {
   constructor() {
     super("A sessão do Instagram não está autenticada.");
     this.name = "AuthenticationRequiredError";
+  }
+}
+
+export class RateLimitError extends Error {
+  constructor(retryAfterMs, hasRetryAfter = false) {
+    super("Instagram respondeu com HTTP 429 (Too Many Requests).");
+    this.name = "RateLimitError";
+    this.retryAfterMs = retryAfterMs;
+    this.hasRetryAfter = hasRetryAfter;
   }
 }
 
@@ -82,6 +92,19 @@ export async function openInstagramHome(page) {
   });
 }
 
+export function isOnTargetPost(page) {
+  try {
+    const current = new URL(page.url());
+    const target = new URL(TARGET_POST);
+    return (
+      current.hostname === target.hostname &&
+      current.pathname === target.pathname
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function ensureLoggedIn(
   page,
   { signal, announceExisting = false } = {},
@@ -111,16 +134,69 @@ export async function ensureLoggedIn(
   return false;
 }
 
+function parseRetryAfter(response) {
+  const value = response.headers()["retry-after"]?.trim();
+  if (!value) return null;
+
+  if (/^\d+$/.test(value)) {
+    const delay = Number(value) * 1_000;
+    return Number.isFinite(delay) && delay > 0 ? delay : null;
+  }
+
+  const date = Date.parse(value);
+  if (Number.isNaN(date)) return null;
+
+  const delay = date - Date.now();
+  return delay > 0 ? delay : null;
+}
+
+function createRateLimitError(response) {
+  const retryAfterMs = parseRetryAfter(response);
+  return new RateLimitError(
+    retryAfterMs ?? RATE_LIMIT_FALLBACK_MS,
+    retryAfterMs !== null,
+  );
+}
+
 export async function openTargetPost(page) {
   console.log("\nAbrindo post alvo...");
-  await page.goto(TARGET_POST, {
-    waitUntil: "domcontentloaded",
-    timeout: 60_000,
-  });
+  let rateLimitResponse;
+
+  const captureRateLimit = (response) => {
+    const request = response.request();
+    if (
+      response.status() === 429 &&
+      request.isNavigationRequest() &&
+      request.frame() === page.mainFrame()
+    ) {
+      rateLimitResponse = response;
+    }
+  };
+
+  page.on("response", captureRateLimit);
+
+  try {
+    const response = await page.goto(TARGET_POST, {
+      waitUntil: "domcontentloaded",
+      timeout: 60_000,
+    });
+
+    if (response?.status() === 429) {
+      throw createRateLimitError(response);
+    }
+  } catch (error) {
+    if (error instanceof RateLimitError) throw error;
+    if (rateLimitResponse) throw createRateLimitError(rateLimitResponse);
+    throw error;
+  } finally {
+    page.off("response", captureRateLimit);
+  }
 
   if (!(await isLoggedIn(page))) {
     throw new AuthenticationRequiredError();
   }
+
+  console.log("Post carregado.");
 }
 
 async function firstVisible(locators, timeoutMs = 8_000) {

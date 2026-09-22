@@ -42,7 +42,9 @@ export async function runScheduler({
   console.log(`Intervalo: ${intervalSeconds}s`);
   console.log(`Limite: ${actionLimit}`);
 
-  for (let attempt = 1; attempt <= actionLimit; attempt += 1) {
+  let attempt = 1;
+
+  while (attempt <= actionLimit) {
     if (signal?.aborted) return;
 
     console.log(`\n[${attempt}/${actionLimit}] Executando ação...`);
@@ -53,10 +55,34 @@ export async function runScheduler({
       console.log(`[${attempt}/${actionLimit}] Concluído.`);
     } catch (error) {
       if (signal?.aborted) return;
+
+      if (error?.name === "RateLimitError") {
+        const delayMs =
+          Number.isFinite(error.retryAfterMs) && error.retryAfterMs > 0
+            ? error.retryAfterMs
+            : intervalMs;
+        const delaySeconds = Math.ceil(delayMs / 1_000);
+
+        console.warn("\nInstagram retornou HTTP 429 (Too Many Requests).");
+        if (error.hasRetryAfter) {
+          console.warn(`Retry-After: ${delaySeconds} segundos.`);
+        }
+        console.warn(`Scheduler pausado por ${delaySeconds} segundos.`);
+        console.warn("Próxima tentativa após o período de cooldown.");
+
+        if (!(await wait(delayMs, signal))) return;
+
+        console.log("\nCooldown encerrado.");
+        console.log("Retomando scheduler.");
+        continue;
+      }
+
       console.error(`[${attempt}/${actionLimit}] Falha:\n${formatError(error)}`);
     }
 
-    if (attempt < actionLimit) {
+    attempt += 1;
+
+    if (attempt <= actionLimit) {
       console.log(`\nPróxima execução em ${intervalSeconds} segundos.`);
       if (!(await wait(intervalMs, signal))) return;
     }

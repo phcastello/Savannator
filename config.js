@@ -3,6 +3,7 @@ export const TARGET_POST =
 
 export const INTERVAL_MS = 1_500;
 export const ACTION_LIMIT = 1_000_000;
+export const RATE_LIMIT_FALLBACK_MS = 15 * 60 * 1000;
 
 export const COMMENT_TEXTS = [
   "🔥",
