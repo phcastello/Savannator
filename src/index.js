@@ -294,8 +294,14 @@ async function main() {
 
   try {
     if (options.mode === "reply") {
+      if (options.replyDriver === "browser") {
+        const { runBrowserReplyMode } = await import("./reply-browser-mode.js");
+        await runBrowserReplyMode(options);
+        return;
+      }
+
       const { runReplyMode } = await import("./reply-mode.js");
-      await runReplyMode();
+      await runReplyMode(options);
       return;
     }
 

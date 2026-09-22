@@ -5,7 +5,8 @@
   "description": "Automação controlada de um único post do Instagram com Playwright.",
   "type": "module",
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=20"

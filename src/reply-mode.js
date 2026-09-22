@@ -227,6 +227,7 @@ export async function runReplyMode() {
   });
 
   console.log("Modo: reply");
+  console.log("Driver: api");
   console.log(
     config.username ? `Conta: @${config.username}` : `Conta: ${config.userId}`,
   );

@@ -1,6 +1,6 @@
 # Savanna Bot
 
-Projeto em Node.js com dois modos independentes: a automação existente via Playwright para publicar comentários em um post configurado e um modo baseado na API oficial do Instagram para responder comentários ainda não respondidos pela própria conta.
+Projeto em Node.js com dois modos independentes: a automação existente via Playwright para publicar comentários em um post configurado e um modo para responder comentários. O modo reply pode usar a API oficial ou uma sessão do navegador.
 
 ## Instalação
 
@@ -95,7 +95,7 @@ O fluxo experimental de GIF continua preservado em `src/instagram.js`, incluindo
 
 ## Modo reply
 
-O modo `reply` usa somente a [API oficial do Instagram](https://developers.facebook.com/documentation/instagram-platform/comment-moderation), não abre navegador, não carrega Playwright e não precisa de `--profile`. A conta precisa ser profissional (Business ou Creator), e o token do fluxo Instagram Login precisa incluir as permissões `instagram_business_basic` e `instagram_business_manage_comments`.
+O modo `reply` aceita os drivers `api` e `browser`. Quando `--reply-driver` é omitido, o valor continua sendo `api`, preservando a compatibilidade com o comando anterior.
 
 Copie [`.env.example`](./.env.example) para `.env` e configure:
 
@@ -109,9 +109,21 @@ REPLY_TEXT=Texto fixo da resposta
 REPLY_SCAN_INTERVAL_MS=60000
 ```
 
-`INSTAGRAM_USER_ID`, `INSTAGRAM_ACCESS_TOKEN` e `REPLY_TEXT` são obrigatórios. `INSTAGRAM_USERNAME` é usado nos logs e como fallback de identificação do autor; o ID numérico continua sendo a identificação preferencial. Nunca coloque o token em `config.js` nem envie o arquivo `.env` ao Git — ele já está ignorado.
+`REPLY_TEXT` e `REPLY_SCAN_INTERVAL_MS` são compartilhados pelos dois drivers. Nunca coloque o token em `config.js` nem envie o arquivo `.env` ao Git — ele já está ignorado.
+
+### Reply usando API
+
+Este driver usa a [API oficial do Instagram](https://developers.facebook.com/documentation/instagram-platform/comment-moderation), não abre navegador, não carrega Playwright e não precisa de `--profile`. A conta precisa ser profissional (Business ou Creator), e o token do fluxo Instagram Login precisa incluir as permissões `instagram_business_basic` e `instagram_business_manage_comments`.
+
+`INSTAGRAM_USER_ID`, `INSTAGRAM_ACCESS_TOKEN` e `REPLY_TEXT` são obrigatórios. `INSTAGRAM_USERNAME` é usado nos logs e como fallback de identificação do autor; o ID numérico continua sendo a identificação preferencial.
 
 Execute:
+
+```bash
+npm start -- --mode reply --reply-driver api
+```
+
+O comando compatível anterior continua equivalente:
 
 ```bash
 npm start -- --mode reply
@@ -122,3 +134,27 @@ Na inicialização, o bot localiza pela URL o mesmo `TARGET_POST` definido em `c
 O Instagram é a fonte de verdade: não existe arquivo local de “processados”. Assim, reiniciar o processo não duplica replies já existentes. Erros isolados de comentários são registrados sem interromper os demais; rate limits e falhas transitórias usam espera e retry controlados.
 
 Se a Meta informar que o post possui comentários, mas o endpoint retornar somente lotes vazios, o processo encerra após três respostas vazias consecutivas. Esse cenário indica que o token/app não consegue acessar os comentários; verifique a permissão `instagram_business_manage_comments`, seu Access Level no App Dashboard, se a conta profissional foi adicionada ao app e o modo/revisão do app. O encerramento evita percorrer milhares de cursores vazios.
+
+O driver da API é a opção mais robusta, mas depende das permissões e do acesso concedidos pela Meta.
+
+### Reply usando navegador
+
+Este driver usa a mesma sessão persistente, login manual, reautenticação e lock de perfil do modo comentário. Ele abre exclusivamente `TARGET_POST` e processa comentários raiz em lotes incrementais. Um ledger local em `state/` registra cada reply automática confirmada, separado por perfil e post. O driver não consulta replies existentes: comentários respondidos manualmente ou por versões anteriores podem receber uma reply automática na primeira execução desta versão. Após o registro, o ledger impede novo envio para o mesmo comentário em scans futuros e após reiniciar.
+
+Configure `INSTAGRAM_USERNAME` com o username da conta autenticada e `REPLY_TEXT` com a resposta fixa. `INSTAGRAM_ACCESS_TOKEN` e `INSTAGRAM_USER_ID` não são exigidos por este driver.
+
+No `.env`, configure também `REPLY_INTERVAL_MS=3000` e, opcionalmente, `REPLY_MAX_PER_SCAN=0`. O intervalo de 3000 ms é apenas um exemplo configurável, não uma garantia de segurança contra limitações do Instagram.
+
+Execute em headless:
+
+```bash
+npm start -- --mode reply --reply-driver browser --profile atletica
+```
+
+Ou mantenha o navegador visível para inspecionar a interface:
+
+```bash
+npm start -- --mode reply --reply-driver browser --profile atletica --show
+```
+
+As replies são enviadas sequencialmente, respeitando `REPLY_INTERVAL_MS` entre envios confirmados. `REPLY_MAX_PER_SCAN=0` não impõe limite; um valor positivo limita os envios por scan. Ao concluir um scan, o bot espera `REPLY_SCAN_INTERVAL_MS`, recarrega o mesmo post e inicia outra varredura. Em caso de rate limit, interrompe o scan e respeita `RATE_LIMIT_FALLBACK_MS` ou o prazo informado pelo Instagram. O Chromium permanece aberto entre os scans. Esse driver não depende da Graph API, mas é mais suscetível a mudanças na interface do Instagram.

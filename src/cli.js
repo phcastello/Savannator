@@ -1,5 +1,6 @@
 const PROFILE_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const VALID_MODES = new Set(["comment", "reply"]);
+const VALID_REPLY_DRIVERS = new Set(["api", "browser"]);
 
 export function printUsage() {
   console.log(
@@ -7,7 +8,8 @@ export function printUsage() {
       "Uso:",
       "npm start -- --profile <nome> [--show]",
       "npm start -- --mode comment --profile <nome> [--show]",
-      "npm start -- --mode reply",
+      "npm start -- --mode reply [--reply-driver api]",
+      "npm start -- --mode reply --reply-driver browser --profile <nome> [--show]",
     ].join("\n"),
   );
 }
@@ -15,6 +17,7 @@ export function printUsage() {
 export function parseCliArgs(args) {
   let mode;
   let profile;
+  let replyDriver;
   let show = false;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -40,6 +43,33 @@ export function parseCliArgs(args) {
       }
 
       mode = argument.slice("--mode=".length);
+      continue;
+    }
+
+    if (argument === "--reply-driver") {
+      if (replyDriver !== undefined) {
+        throw new Error(
+          "O argumento --reply-driver deve ser informado apenas uma vez.",
+        );
+      }
+
+      replyDriver = args[index + 1];
+      index += 1;
+
+      if (!replyDriver || replyDriver.startsWith("--")) {
+        throw new Error("Informe api ou browser depois de --reply-driver.");
+      }
+      continue;
+    }
+
+    if (argument.startsWith("--reply-driver=")) {
+      if (replyDriver !== undefined) {
+        throw new Error(
+          "O argumento --reply-driver deve ser informado apenas uma vez.",
+        );
+      }
+
+      replyDriver = argument.slice("--reply-driver=".length);
       continue;
     }
 
@@ -84,6 +114,16 @@ export function parseCliArgs(args) {
     throw new Error('Modo inválido. Use apenas "comment" ou "reply".');
   }
 
+  if (replyDriver !== undefined && !VALID_REPLY_DRIVERS.has(replyDriver)) {
+    throw new Error('Reply driver inválido. Use apenas "api" ou "browser".');
+  }
+
+  if (mode === "comment" && replyDriver !== undefined) {
+    throw new Error(
+      "O argumento --reply-driver só pode ser usado no modo reply.",
+    );
+  }
+
   if (mode === "comment" && !profile) {
     throw new Error("O argumento --profile é obrigatório.");
   }
@@ -94,9 +134,21 @@ export function parseCliArgs(args) {
     );
   }
 
-  if (mode === "reply" && show) {
-    throw new Error("O argumento --show não pode ser usado no modo reply.");
+  if (mode === "reply") {
+    replyDriver ??= "api";
+
+    if (replyDriver === "api" && show) {
+      throw new Error(
+        "O argumento --show não pode ser usado com --reply-driver api.",
+      );
+    }
+
+    if (replyDriver === "browser" && !profile) {
+      throw new Error(
+        "O argumento --profile é obrigatório com --reply-driver browser.",
+      );
+    }
   }
 
-  return { mode, profile, show };
+  return { mode, profile, replyDriver, show };
 }
