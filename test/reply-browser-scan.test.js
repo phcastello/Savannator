@@ -7,6 +7,7 @@ import { chromium } from "playwright";
 import { scanAndReplyToComments } from "../src/instagram-replies.js";
 import { LedgerWriteError, loadReplyLedger } from "../src/reply-ledger.js";
 import { RateLimitError } from "../src/instagram.js";
+import { recyclePage } from "../src/page-health.js";
 
 const targetPost = "https://www.instagram.com/p/test-post/";
 
@@ -97,9 +98,13 @@ test("ledger do browser controla envio, replies manuais e restart", async (t) =>
     assert.deepEqual(await page.evaluate(() => window.sent), ["a", "c", "e", "b"]);
     assert.equal(ledger.size, 4);
     assert.equal(ledger.has("/c/c/"), true);
-    const persisted = JSON.parse(await readFile(ledger.filePath, "utf8"));
-    assert.equal(persisted.profile, "atletica");
-    assert.equal(persisted.targetPost, targetPost);
+    const persisted = (await readFile(ledger.filePath, "utf8"))
+      .trimEnd()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.equal(persisted.length, 4);
+    assert.ok(persisted.every((record) => record.profile === "atletica"));
+    assert.ok(persisted.every((record) => record.targetPost === targetPost));
 
     const restarted = await loadReplyLedger({ stateDir, profile: "atletica", targetPost });
     const second = await scan(page, restarted);
@@ -213,5 +218,47 @@ test("falha ao gravar o ledger interrompe envios seguintes", async (t) => {
   } finally {
     await context.close();
     await browser.close();
+  }
+});
+
+test("reply continua em nova Page sem duplicar itens presentes no ledger", async (t) => {
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+  } catch (error) {
+    t.skip(`Chromium indisponível: ${error.message}`);
+    return;
+  }
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "savanna-replies-"));
+  const context = await browser.newContext();
+  await context.addCookies([{
+    name: "sessionid", value: "synthetic-test-session",
+    domain: ".instagram.com", path: "/", expires: -1,
+  }]);
+  const comments = [
+    { id: "a", author: "pedro" },
+    { id: "b", author: "joao" },
+    { id: "c", author: "maria" },
+    { id: "d", author: "ana" },
+  ];
+  const oldPage = await context.newPage();
+  try {
+    const ledger = await loadReplyLedger({ stateDir, profile: "atletica", targetPost });
+    await fixture(oldPage, comments);
+    const first = await scan(oldPage, ledger, { maxPerScan: 2 });
+    assert.equal(first.repliesSent, 2);
+    const firstSent = await oldPage.evaluate(() => window.sent);
+
+    const newPage = await recyclePage(context, oldPage, (candidate) => fixture(candidate, comments));
+    assert.equal(oldPage.isClosed(), true);
+    const second = await scan(newPage, ledger, { maxPerScan: 2 });
+    const secondSent = await newPage.evaluate(() => window.sent);
+    assert.equal(second.repliesSent, 2);
+    assert.equal(ledger.size, 4);
+    assert.equal(new Set([...firstSent, ...secondSent]).size, 4);
+  } finally {
+    await context.close();
+    await browser.close();
+    await rm(stateDir, { recursive: true, force: true });
   }
 });

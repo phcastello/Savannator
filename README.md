@@ -87,6 +87,10 @@ Atualmente, cada execução do scheduler escolhe aleatoriamente um item de `COMM
 
 Toda a lógica específica do Instagram permanece em `src/instagram.js`. Quando executado com `--show`, o programa imprime um diagnóstico curto dos possíveis campos se o composer não for reconhecido.
 
+`COMMENT_PAGE_RECYCLE_EVERY=100` no `.env` recria a Page após 100 comentários publicados, dentro do mesmo BrowserContext e mantendo a sessão. Use `0` para desabilitar. A cada 25 ações, o log mostra tempos por etapa, média recente e métricas locais de DOM, heap e RSS quando disponíveis. O scheduler continua aguardando `INTERVAL_MS` depois de cada ação; a duração da ação se soma a esse intervalo.
+
+Após cada publicação confirmada, o terminal mostra o ritmo nos últimos 60 segundos: vermelho abaixo de 8 interações/min, amarelo de 8 a 14, verde de 15 a 29 e azul a partir de 30. Sem suporte a cores, o nome da faixa permanece visível.
+
 ## Código de GIF preservado
 
 O fluxo experimental de GIF continua preservado em `src/instagram.js`, incluindo `performGifAction()`, para possível uso futuro. Ele não é chamado pelo scheduler atual e `GIF_SEARCH_TERMS` continua disponível na configuração.
@@ -158,3 +162,7 @@ npm start -- --mode reply --reply-driver browser --profile atletica --show
 ```
 
 As replies são enviadas sequencialmente, respeitando `REPLY_INTERVAL_MS` entre envios confirmados. `REPLY_MAX_PER_SCAN=0` não impõe limite; um valor positivo limita os envios por scan. Ao concluir um scan, o bot espera `REPLY_SCAN_INTERVAL_MS`, recarrega o mesmo post e inicia outra varredura. Em caso de rate limit, interrompe o scan e respeita `RATE_LIMIT_FALLBACK_MS` ou o prazo informado pelo Instagram. O Chromium permanece aberto entre os scans. Esse driver não depende da Graph API, mas é mais suscetível a mudanças na interface do Instagram.
+
+`REPLY_PAGE_RECYCLE_EVERY=100` no `.env` interrompe um scan após 100 replies confirmadas, recria a Page no mesmo contexto e continua pelo ledger, sem reenviar os comentários já registrados. Use `0` para desabilitar. O ledger é NDJSON append-only em `state/`. O log mostra tempos por reply a cada 25 envios e métricas de DOM e heap a cada 100 comentários analisados.
+
+O reply via navegador usa o mesmo medidor colorido de interações por minuto, atualizado somente após confirmação e gravação no ledger.

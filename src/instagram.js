@@ -249,19 +249,20 @@ function gifButtonLocators(page) {
 function commentComposerLocators(page) {
   const commentName =
     /add a comment|adicionar coment[aá]rio|adicione um coment[aá]rio|comment|comentar/i;
+  const composerSelector = [
+    'textarea[aria-label*="comment" i]',
+    'textarea[aria-label*="coment" i]',
+    '[contenteditable="true"][aria-label*="comment" i]',
+    '[contenteditable="true"][aria-label*="coment" i]',
+  ].join(", ");
 
   return [
+    page.locator("main article").locator(composerSelector),
+    page.locator("main").locator(composerSelector),
+    page.locator(composerSelector),
     page.getByRole("textbox", { name: commentName }),
     page.getByPlaceholder(commentName),
     page.getByLabel(commentName),
-    page.locator(
-      [
-        'textarea[aria-label*="comment" i]',
-        'textarea[aria-label*="coment" i]',
-        '[contenteditable="true"][aria-label*="comment" i]',
-        '[contenteditable="true"][aria-label*="coment" i]',
-      ].join(", "),
-    ),
   ];
 }
 
@@ -581,8 +582,10 @@ function commentSubmitLocators(page, composer) {
   );
 
   return [
+    form.locator('button[type="submit"], input[type="submit"]'),
     form.getByRole("button", { name: submitName }),
     nearbyContainer.getByRole("button", { name: submitName }),
+    page.locator("main article").getByRole("button", { name: unambiguousSubmitName }),
     page
       .getByRole("article")
       .getByRole("button", { name: unambiguousSubmitName }),
@@ -637,57 +640,78 @@ async function waitForCommentSubmission(page, composer, timeoutMs = 8_000) {
   throw new Error("Não foi possível confirmar a publicação do comentário.");
 }
 
-export async function performCommentAction(page, { debug = false } = {}) {
-  if (!(await isLoggedIn(page))) throw new AuthenticationRequiredError();
-  if (
-    !Array.isArray(COMMENT_TEXTS) ||
-    COMMENT_TEXTS.length === 0 ||
-    COMMENT_TEXTS.some(
-      (comment) => typeof comment !== "string" || comment.trim().length === 0,
-    )
-  ) {
-    throw new Error(
-      "COMMENT_TEXTS deve conter somente strings não vazias.",
-    );
+async function measureStage(timing, name, action) {
+  const started = performance.now();
+  try {
+    return await action();
+  } finally {
+    timing[name] = performance.now() - started;
   }
+}
 
-  const composer = await findCommentComposer(page);
-  if (!composer) {
-    if (debug) {
-      await printVisibleCandidates(page, "Possíveis campos de comentário:", {
-        commentsOnly: true,
-      });
-    }
-    throw new Error("Campo de comentário não encontrado.");
-  }
-
-  const comment = randomItem(COMMENT_TEXTS);
-  console.log(`Comentário selecionado: ${JSON.stringify(comment)}`);
-  await fillCommentComposer(composer, comment);
-
-  const submitButton = await firstVisible(
-    commentSubmitLocators(page, composer),
-    3_000,
-  );
-
-  if (submitButton) {
-    await submitButton.click();
-  } else {
-    await composer.focus();
-    const focused = await composer
-      .evaluate(
-        (element) =>
-          document.activeElement === element ||
-          element.contains(document.activeElement),
+export async function performCommentAction(page, { debug = false, onTiming } = {}) {
+  const started = performance.now();
+  const timing = {};
+  try {
+    if (!(await isLoggedIn(page))) throw new AuthenticationRequiredError();
+    if (
+      !Array.isArray(COMMENT_TEXTS) ||
+      COMMENT_TEXTS.length === 0 ||
+      COMMENT_TEXTS.some(
+        (comment) => typeof comment !== "string" || comment.trim().length === 0,
       )
-      .catch(() => false);
-
-    if (!focused) {
-      throw new Error("Não foi possível focar o campo de comentário para enviar.");
+    ) {
+      throw new Error(
+        "COMMENT_TEXTS deve conter somente strings não vazias.",
+      );
     }
-    await composer.press("Enter");
-  }
 
-  await waitForCommentSubmission(page, composer);
-  console.log("Comentário publicado.");
+    const composer = await measureStage(timing, "composerMs", () => findCommentComposer(page));
+    if (!composer) {
+      if (debug) {
+        await printVisibleCandidates(page, "Possíveis campos de comentário:", {
+          commentsOnly: true,
+        });
+      }
+      throw new Error("Campo de comentário não encontrado.");
+    }
+
+    const comment = randomItem(COMMENT_TEXTS);
+    console.log(`Comentário selecionado: ${JSON.stringify(comment)}`);
+    await measureStage(timing, "fillMs", () => fillCommentComposer(composer, comment));
+
+    const submitButton = await measureStage(timing, "submitLookupMs", () =>
+      firstVisible(commentSubmitLocators(page, composer), 3_000),
+    );
+
+    await measureStage(timing, "submitMs", async () => {
+      if (submitButton) {
+        await submitButton.click();
+      } else {
+        await composer.focus();
+        const focused = await composer
+          .evaluate(
+            (element) =>
+              document.activeElement === element ||
+              element.contains(document.activeElement),
+          )
+          .catch(() => false);
+
+        if (!focused) {
+          throw new Error("Não foi possível focar o campo de comentário para enviar.");
+        }
+        await composer.press("Enter");
+      }
+    });
+
+    await measureStage(timing, "confirmMs", () => waitForCommentSubmission(page, composer));
+    console.log("Comentário publicado.");
+  } finally {
+    timing.totalMs = performance.now() - started;
+    try {
+      onTiming?.(timing);
+    } catch {
+      // Instrumentação não interfere na publicação.
+    }
+  }
 }

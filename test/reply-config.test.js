@@ -14,6 +14,7 @@ test("browser driver não exige credenciais da Graph API", () => {
   assert.equal(config.replyText, "resposta fixa");
   assert.equal(config.replyIntervalMs, 3_000);
   assert.equal(config.maxPerScan, 0);
+  assert.equal(config.pageRecycleEvery, 100);
 });
 
 test("browser driver valida intervalo e limite próprios", () => {
@@ -32,6 +33,11 @@ test("browser driver valida intervalo e limite próprios", () => {
   assert.throws(
     () => loadBrowserReplyConfig({ ...base, REPLY_MAX_PER_SCAN: "1.5" }),
     /REPLY_MAX_PER_SCAN/,
+  );
+  assert.equal(loadBrowserReplyConfig({ ...base, REPLY_PAGE_RECYCLE_EVERY: "0" }).pageRecycleEvery, 0);
+  assert.throws(
+    () => loadBrowserReplyConfig({ ...base, REPLY_PAGE_RECYCLE_EVERY: "-1" }),
+    /REPLY_PAGE_RECYCLE_EVERY/,
   );
 });
 

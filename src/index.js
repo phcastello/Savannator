@@ -1,12 +1,18 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import dotenv from "dotenv";
 import { parseCliArgs, printUsage } from "./cli.js";
+import { createInteractionMeter } from "./interaction-meter.js";
+import { createCommentRecyclePolicy, createPerformanceReporter, recyclePage } from "./page-health.js";
+
+dotenv.config({ quiet: true });
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function validateCommentConfig({
   ACTION_LIMIT,
   COMMENT_TEXTS,
+  COMMENT_PAGE_RECYCLE_EVERY,
   GIF_SEARCH_TERMS,
   INTERVAL_MS,
   RATE_LIMIT_FALLBACK_MS,
@@ -22,6 +28,9 @@ function validateCommentConfig({
   }
   if (!Number.isInteger(ACTION_LIMIT) || ACTION_LIMIT <= 0) {
     throw new Error("ACTION_LIMIT deve ser um inteiro maior que zero.");
+  }
+  if (!Number.isSafeInteger(COMMENT_PAGE_RECYCLE_EVERY) || COMMENT_PAGE_RECYCLE_EVERY < 0) {
+    throw new Error("COMMENT_PAGE_RECYCLE_EVERY deve ser um inteiro não negativo.");
   }
   if (!Number.isFinite(RATE_LIMIT_FALLBACK_MS) || RATE_LIMIT_FALLBACK_MS <= 0) {
     throw new Error("RATE_LIMIT_FALLBACK_MS deve ser maior que zero.");
@@ -54,6 +63,7 @@ async function runCommentMode({ profile, show }) {
 
   const {
     ACTION_LIMIT,
+    COMMENT_PAGE_RECYCLE_EVERY,
     INTERVAL_MS,
     RATE_LIMIT_FALLBACK_MS,
     TARGET_POST,
@@ -76,6 +86,9 @@ async function runCommentMode({ profile, show }) {
   } = instagram;
   const { acquireProfileLock, ProfileInUseError } = profileLockModule;
   const { runScheduler } = scheduler;
+  const recyclePolicy = createCommentRecyclePolicy(COMMENT_PAGE_RECYCLE_EVERY);
+  const performanceReporter = createPerformanceReporter("comment", { intervalMs: INTERVAL_MS });
+  const interactionMeter = createInteractionMeter("comment");
 
   try {
     validateCommentConfig(config);
@@ -93,6 +106,7 @@ async function runCommentMode({ profile, show }) {
   let targetNeedsNavigation = false;
   let shuttingDown = false;
   let showModeAnnounced = false;
+  let recycleReason;
   const controller = new AbortController();
 
   const requestShutdown = async (signal) => {
@@ -132,6 +146,8 @@ async function runCommentMode({ profile, show }) {
       context = await launchBrowser(profileDir, { headless });
       page = await getMainPage(context);
       await openInstagramHome(page);
+      recyclePolicy.resetPage();
+      recycleReason = undefined;
     };
 
     const authenticateVisibly = async () => {
@@ -245,6 +261,7 @@ async function runCommentMode({ profile, show }) {
           throw error;
         }
 
+        const scheduledStarted = performance.now();
         if (!(await isLoggedIn(page))) {
           if (!(await startAuthenticatedHeadlessBrowser())) {
             if (controller.signal.aborted) return;
@@ -254,7 +271,44 @@ async function runCommentMode({ profile, show }) {
 
         if (!(await ensureTargetPost())) return;
 
-        await performCommentAction(page, { debug: show });
+        if (recycleReason) {
+          const reason = recycleReason;
+          recycleReason = undefined;
+          try {
+            const replacement = await recyclePage(context, page, async (candidate) => {
+              await openTargetPost(candidate);
+              if (!(await isLoggedIn(candidate)) || !isOnTargetPost(candidate)) {
+                throw new Error("A nova Page não ficou autenticada no post alvo.");
+              }
+            });
+            page = replacement;
+            targetNeedsNavigation = false;
+            recyclePolicy.recycled();
+            console.log(`Page reciclada no mesmo BrowserContext (${reason}).`);
+          } catch (error) {
+            if (error instanceof RateLimitError) {
+              recycleReason = reason;
+              throw error;
+            }
+            recyclePolicy.failed();
+            console.warn(`Falha ao reciclar a Page; mantendo a anterior: ${error.message}`);
+          }
+        }
+
+        let timing;
+        try {
+          await performCommentAction(page, {
+            debug: show,
+            onTiming: (value) => { timing = value; },
+          });
+        } finally {
+          if (timing) {
+            timing.scheduledMs = performance.now() - scheduledStarted;
+            await performanceReporter.record(page, timing).catch(() => {});
+          }
+        }
+        interactionMeter.record();
+        if (timing) recycleReason = recyclePolicy.recordSuccess(timing);
       },
     });
   } catch (error) {

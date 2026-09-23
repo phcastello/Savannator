@@ -5,6 +5,7 @@ import {
   expandCommentReplies,
   findLoadedComments,
   hasOwnBrowserReply,
+  loadMoreComments,
   openReplyComposer,
   submitReply,
 } from "../src/instagram-replies.js";
@@ -176,6 +177,64 @@ test("distingue comentários raiz, replies e respostas da própria conta", async
 
     await context.close();
   } finally {
+    await browser.close();
+  }
+});
+
+test("carrega comentários após rolar a lista principal e encontrar controle além dos primeiros 300", async (t) => {
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+  } catch (error) {
+    t.skip(`Chromium indisponível: ${error.message}`);
+    return;
+  }
+
+  const context = await browser.newContext();
+  await context.addCookies([{
+    name: "sessionid", value: "synthetic-test-session",
+    domain: ".instagram.com", path: "/", expires: -1,
+  }]);
+  const page = await context.newPage();
+
+  try {
+    const row = (index) => `<div style="height:50px">
+      <span><a href="/user${index}/">user${index}</a>
+      <a href="/p/post/c/${index}/"><time>agora</time></a></span>
+      <span>comentário ${index}</span><button>Responder</button>
+    </div>`;
+    await page.setContent(`<main>
+      ${'<button style="display:none">irrelevante</button>'.repeat(320)}
+      <div id="comments" style="height:180px;overflow-y:auto">
+        ${Array.from({ length: 14 }, (_, index) => row(index)).join("")}
+        <div style="height:80px;overflow-y:auto">
+          ${row(14)}<div style="height:200px"></div>
+        </div>
+      </div>
+      <button id="load" style="display:none">View more comments</button>
+    </main>`);
+    await page.evaluate(() => {
+      const panel = document.querySelector("#comments");
+      const button = document.querySelector("#load");
+      panel.addEventListener("scroll", () => {
+        if (panel.scrollTop > 0) setTimeout(() => { button.style.display = "block"; }, 50);
+      });
+      button.addEventListener("click", () => {
+        panel.insertAdjacentHTML("beforeend", `<div style="height:50px">
+          <span><a href="/new-user/">new-user</a>
+          <a href="/p/post/c/new/"><time>agora</time></a></span>
+          <span>comentário novo</span><button>Responder</button>
+        </div>`);
+        button.style.display = "none";
+      });
+    });
+
+    const known = new Set((await findLoadedComments(page)).map((comment) => comment.key));
+    assert.equal(known.size, 15);
+    assert.equal(await loadMoreComments(page, known), 1);
+    assert.equal((await findLoadedComments(page)).some((comment) => comment.key === "/c/new/"), true);
+  } finally {
+    await context.close();
     await browser.close();
   }
 });

@@ -25,7 +25,9 @@ import {
   waitForCommentsArea,
 } from "./instagram-replies.js";
 import { acquireProfileLock, ProfileInUseError } from "./profile-lock.js";
-import { loadReplyLedger } from "./reply-ledger.js";
+import { createInteractionMeter } from "./interaction-meter.js";
+import { createPerformanceReporter, recyclePage, samplePageHealth } from "./page-health.js";
+import { LedgerWriteError, loadReplyLedger } from "./reply-ledger.js";
 
 dotenv.config({ quiet: true });
 
@@ -71,6 +73,7 @@ export function loadBrowserReplyConfig(env = process.env) {
   const scanIntervalMs = Number(env.REPLY_SCAN_INTERVAL_MS ?? 60_000);
   const replyIntervalMs = Number(env.REPLY_INTERVAL_MS ?? 3_000);
   const maxPerScan = Number(env.REPLY_MAX_PER_SCAN ?? 0);
+  const pageRecycleEvery = Number(env.REPLY_PAGE_RECYCLE_EVERY ?? 100);
   let targetPost;
 
   try {
@@ -91,6 +94,9 @@ export function loadBrowserReplyConfig(env = process.env) {
   if (!Number.isSafeInteger(maxPerScan) || maxPerScan < 0) {
     throw new Error("REPLY_MAX_PER_SCAN deve ser um inteiro não negativo.");
   }
+  if (!Number.isSafeInteger(pageRecycleEvery) || pageRecycleEvery < 0) {
+    throw new Error("REPLY_PAGE_RECYCLE_EVERY deve ser um inteiro não negativo.");
+  }
   if (!Number.isFinite(RATE_LIMIT_FALLBACK_MS) || RATE_LIMIT_FALLBACK_MS <= 0) {
     throw new Error("RATE_LIMIT_FALLBACK_MS deve ser maior que zero.");
   }
@@ -104,6 +110,7 @@ export function loadBrowserReplyConfig(env = process.env) {
   return {
     replyIntervalMs,
     maxPerScan,
+    pageRecycleEvery,
     rateLimitFallbackMs: RATE_LIMIT_FALLBACK_MS,
     replyText,
     scanIntervalMs,
@@ -142,6 +149,10 @@ export async function runBrowserReplyMode({ profile, show }) {
   let showModeAnnounced = false;
   let targetNeedsNavigation = true;
   let ledger;
+  let repliesOnPage = 0;
+  let lastReplyAt = 0;
+  const performanceReporter = createPerformanceReporter("reply");
+  const interactionMeter = createInteractionMeter("reply");
 
   const requestShutdown = async (signalName) => {
     if (shuttingDown) return;
@@ -191,6 +202,7 @@ export async function runBrowserReplyMode({ profile, show }) {
       page = await getMainPage(context);
       await openInstagramHome(page);
       targetNeedsNavigation = true;
+      repliesOnPage = 0;
     };
 
     const authenticateVisibly = async () => {
@@ -301,21 +313,77 @@ export async function runBrowserReplyMode({ profile, show }) {
 
         await waitForCommentsArea(page, { signal: controller.signal });
 
+        const remainingBeforeRecycle = config.pageRecycleEvery > 0
+          ? Math.max(1, config.pageRecycleEvery - repliesOnPage)
+          : 0;
+        const maxPerScan = remainingBeforeRecycle > 0
+          ? config.maxPerScan > 0
+            ? Math.min(config.maxPerScan, remainingBeforeRecycle)
+            : remainingBeforeRecycle
+          : config.maxPerScan;
+
         const stats = await scanAndReplyToComments(page, {
           intervalMs: config.replyIntervalMs,
-          maxPerScan: config.maxPerScan,
+          maxPerScan,
           ledger,
           ownUsername: config.username,
           replyText: config.replyText,
           signal: controller.signal,
+          initialLastReplyAt: lastReplyAt,
+          onReply: async ({ durationMs, sentAt }) => {
+            repliesOnPage += 1;
+            lastReplyAt = sentAt;
+            interactionMeter.record();
+            await performanceReporter.record(page, { totalMs: durationMs }).catch(() => {});
+          },
+          onProgress: async (commentsAnalyzed) => {
+            if (commentsAnalyzed % 100 !== 0) return;
+            const health = await samplePageHealth(page);
+            console.log(
+              `Progresso do scan: ${commentsAnalyzed} comentários, ` +
+                `DOM nodes ${health.nodes ?? "indisponível"}, ` +
+                `heap renderer ${Number.isFinite(health.rendererHeap) ?
+                  `${(health.rendererHeap / 1024 / 1024).toFixed(1)} MB` : "indisponível"}.`,
+            );
+          },
         });
         if (controller.signal.aborted) break;
         printSummary(stats, ledger);
+
+        if (config.pageRecycleEvery > 0 && repliesOnPage >= config.pageRecycleEvery) {
+          try {
+            const replacement = await recyclePage(context, page, async (candidate) => {
+              await openTargetPost(candidate);
+              if (!(await isLoggedIn(candidate)) || !isOnTargetPost(candidate)) {
+                throw new Error("A nova Page não ficou autenticada no post alvo.");
+              }
+            });
+            page = replacement;
+            repliesOnPage = 0;
+            targetNeedsNavigation = false;
+            console.log("Page reciclada no mesmo BrowserContext; continuando pelo ledger.");
+            continue;
+          } catch (error) {
+            if (error instanceof RateLimitError) throw error;
+            repliesOnPage = 0;
+            console.warn(`Falha ao reciclar a Page; mantendo a anterior: ${error.message}`);
+          }
+        }
 
         // Cada scan começa com uma navegação nova para que comentários
         // publicados depois do scan anterior também apareçam no post antigo.
         targetNeedsNavigation = true;
       } catch (error) {
+        if (error instanceof LedgerWriteError) {
+          console.error(
+            "Falha ao gravar o ledger. Uma reply pode ter sido enviada sem registro. " +
+              "Corrija o armazenamento antes de reiniciar o bot.",
+          );
+          console.error(error.message);
+          process.exitCode = 1;
+          break;
+        }
+
         if (controller.signal.aborted || error?.name === "AbortError") break;
 
         targetNeedsNavigation = true;

@@ -690,53 +690,70 @@ export async function submitReply(page, composer, replyText, { timeoutMs = 10_00
 
 async function findLoadCommentsControl(page) {
   const controls = page.locator(SELECTORS.controls);
-  const count = Math.min(await controls.count().catch(() => 0), 300);
+  const index = await controls.evaluateAll((elements, patternSource) => {
+    const pattern = new RegExp(patternSource, "i");
+    return elements.findIndex((element) => {
+      const style = window.getComputedStyle(element);
+      const box = element.getBoundingClientRect();
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        box.width === 0 ||
+        box.height === 0
+      ) {
+        return false;
+      }
+      const label = [
+        element.getAttribute("aria-label"),
+        element.getAttribute("title"),
+        element.textContent,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+      return pattern.test(label);
+    });
+  }, LOAD_COMMENTS_PATTERN.source);
 
-  for (let index = 0; index < count; index += 1) {
-    const control = controls.nth(index);
-    if (!(await control.isVisible().catch(() => false))) continue;
-    if (LOAD_COMMENTS_PATTERN.test(await controlLabel(control))) return control;
-  }
-
-  return null;
+  return index < 0 ? null : controls.nth(index);
 }
 
 async function scrollCommentsContainer(page) {
   const loaded = await findLoadedComments(page);
-  if (loaded.length === 0) {
-    return page.evaluate(() => {
-      const scrolling = document.scrollingElement;
-      if (!scrolling) return false;
-      const before = scrolling.scrollTop;
-      scrolling.scrollBy(0, Math.max(window.innerHeight * 0.8, 500));
-      return scrolling.scrollTop !== before;
-    });
-  }
-
-  const item = await locateComment(page, loaded.at(-1));
-  if (!item) return false;
-
-  return item.evaluate((element) => {
-    let current = element.parentElement;
+  return commentPermalinks(page).evaluateAll((anchors, permalink) => {
+    const anchor = anchors.find((candidate) => candidate.getAttribute("href") === permalink);
+    const candidates = [];
+    let current = anchor?.parentElement;
     while (current && current !== document.documentElement) {
       const style = window.getComputedStyle(current);
       const canScroll = current.scrollHeight > current.clientHeight + 8;
       const allowsScroll = /(auto|scroll|overlay)/.test(style.overflowY);
       if (canScroll && allowsScroll) {
-        const before = current.scrollTop;
-        current.scrollBy(0, Math.max(current.clientHeight * 0.8, 400));
-        current.dispatchEvent(new Event("scroll", { bubbles: true }));
-        return current.scrollTop !== before;
+        candidates.push({
+          element: current,
+          comments: current.querySelectorAll('a[href*="/c/"]').length,
+        });
       }
       current = current.parentElement;
+    }
+
+    // A lista principal contém mais permalinks que um painel interno de replies.
+    candidates.sort((a, b) => b.comments - a.comments);
+    for (const { element } of candidates) {
+      const before = element.scrollTop;
+      element.scrollTop = element.scrollHeight;
+      element.dispatchEvent(new Event("scroll", { bubbles: true }));
+      if (element.scrollTop !== before) return true;
     }
 
     const scrolling = document.scrollingElement;
     if (!scrolling) return false;
     const before = scrolling.scrollTop;
-    scrolling.scrollBy(0, Math.max(window.innerHeight * 0.8, 500));
+    scrolling.scrollTop = scrolling.scrollHeight;
+    scrolling.dispatchEvent(new Event("scroll", { bubbles: true }));
     return scrolling.scrollTop !== before;
-  });
+  }, loaded.at(-1)?.permalink);
 }
 
 export async function loadMoreComments(
@@ -746,12 +763,13 @@ export async function loadMoreComments(
 ) {
   if (signal?.aborted) throw abortError();
 
-  const loadControl = await findLoadCommentsControl(page);
+  let loadControl = await findLoadCommentsControl(page);
+  let clickedLoadControl = false;
   if (loadControl) {
-    await loadControl.click().catch(() => {});
+    await loadControl.click();
+    clickedLoadControl = true;
   } else {
-    const scrolled = await scrollCommentsContainer(page);
-    if (!scrolled) return 0;
+    await scrollCommentsContainer(page);
   }
 
   const deadline = Date.now() + 5_000;
@@ -762,6 +780,13 @@ export async function loadMoreComments(
       (comment) => !knownCommentKeys.has(comment.key),
     ).length;
     if (newCount > 0) return newCount;
+    if (!clickedLoadControl) {
+      loadControl = await findLoadCommentsControl(page);
+      if (loadControl) {
+        await loadControl.click();
+        clickedLoadControl = true;
+      }
+    }
     await wait(150, signal);
   }
 
@@ -796,7 +821,18 @@ function isGlobalBrowserError(error) {
 
 export async function scanAndReplyToComments(
   page,
-  { ownUsername, replyText, intervalMs, maxPerScan = 0, ledger, signal, submissionTimeoutMs },
+  {
+    ownUsername,
+    replyText,
+    intervalMs,
+    maxPerScan = 0,
+    ledger,
+    signal,
+    submissionTimeoutMs,
+    initialLastReplyAt = 0,
+    onReply,
+    onProgress,
+  },
 ) {
   const stats = {
     commentsAnalyzed: 0,
@@ -809,7 +845,7 @@ export async function scanAndReplyToComments(
   let stalledLoadAttempts = 0;
   let capturedRateLimit;
   let lastAuthor = "";
-  let lastReplyAt = 0;
+  let lastReplyAt = initialLastReplyAt;
   const authorsRepliedThisBatch = new Set();
 
   const captureRateLimit = (response) => {
@@ -854,6 +890,13 @@ export async function scanAndReplyToComments(
         const [comment] = pending.splice(alternate > 0 ? alternate : 0, 1);
         currentScanProcessed.add(comment.key);
         stats.commentsAnalyzed += 1;
+        if (stats.commentsAnalyzed % 100 === 0) {
+          try {
+            await onProgress?.(stats.commentsAnalyzed);
+          } catch {
+            // Métricas não interrompem o scan.
+          }
+        }
 
         const author = getCommentAuthor(comment);
         const normalizedAuthor = normalizeUsername(author);
@@ -885,6 +928,7 @@ export async function scanAndReplyToComments(
             const remaining = intervalMs - (Date.now() - lastReplyAt);
             if (remaining > 0 && !(await wait(remaining, signal))) throw abortError();
           }
+          const replyStartedAt = performance.now();
           throwIfRateLimited();
           await detectInstagramBlock(page);
           console.log("status: respondendo...");
@@ -898,6 +942,14 @@ export async function scanAndReplyToComments(
           lastReplyAt = Date.now();
           lastAuthor = normalizedAuthor;
           authorsRepliedThisBatch.add(normalizedAuthor);
+          try {
+            await onReply?.({
+              durationMs: performance.now() - replyStartedAt,
+              sentAt: lastReplyAt,
+            });
+          } catch {
+            // A reply já foi persistida; falha de métricas não altera o resultado.
+          }
           console.log("reply enviada");
           console.log("ledger atualizado");
         } catch (error) {
