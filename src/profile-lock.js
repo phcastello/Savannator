@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
 import { mkdir, open, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 export class ProfileInUseError extends Error {
   constructor(profile) {
@@ -35,8 +39,33 @@ async function removeAbandonedLock(lockPath) {
 
   // Um lock ilegível pode estar sendo escrito neste exato momento. Nesse caso,
   // é mais seguro considerá-lo ativo do que remover o lock de outro processo.
-  if (!lock || isProcessRunning(lock.pid)) {
+  if (!lock) {
     return false;
+  }
+
+  if (isProcessRunning(lock.pid)) {
+    if (process.platform !== "win32") return false;
+
+    // O Windows pode reutilizar um PID depois que o bot encerra sem limpar o lock.
+    // A nova instância não pode ter começado depois da criação deste lock.
+    const lockCreatedAt = Date.parse(lock.createdAt);
+    if (!Number.isFinite(lockCreatedAt)) return false;
+
+    try {
+      const { stdout } = await execFileAsync("powershell.exe", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `(Get-Process -Id ${lock.pid} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')`,
+      ], { timeout: 5000 });
+      const processStartedAt = Date.parse(stdout.trim());
+      if (!Number.isFinite(processStartedAt) || processStartedAt <= lockCreatedAt) {
+        return false;
+      }
+    } catch {
+      // Sem confirmação da data de início, preservamos o lock.
+      if (isProcessRunning(lock.pid)) return false;
+    }
   }
 
   try {

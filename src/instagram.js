@@ -158,8 +158,8 @@ function createRateLimitError(response) {
   );
 }
 
-export async function openTargetPost(page) {
-  console.log("\nAbrindo post alvo...");
+export async function openInstagramPost(page, postUrl, { announcement } = {}) {
+  console.log(announcement ?? `\nAbrindo post: ${postUrl}`);
   let rateLimitResponse;
 
   const captureRateLimit = (response) => {
@@ -176,7 +176,7 @@ export async function openTargetPost(page) {
   page.on("response", captureRateLimit);
 
   try {
-    const response = await page.goto(TARGET_POST, {
+    const response = await page.goto(postUrl, {
       waitUntil: "domcontentloaded",
       timeout: 60_000,
     });
@@ -197,6 +197,10 @@ export async function openTargetPost(page) {
   }
 
   console.log("Post carregado.");
+}
+
+export async function openTargetPost(page) {
+  return openInstagramPost(page, TARGET_POST, { announcement: "\nAbrindo post alvo..." });
 }
 
 async function firstVisible(locators, timeoutMs = 8_000) {

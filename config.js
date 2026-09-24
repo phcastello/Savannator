@@ -1,5 +1,5 @@
 export const TARGET_POST =
-  "https://www.instagram.com/p/DdhsVOdTe42/";
+  "https://www.instagram.com/p/Ddg2rfCx8rn/";
 
 export const INTERVAL_MS = 1_500;
 export const ACTION_LIMIT = 1_000_000;
@@ -14,28 +14,27 @@ export const COMMENT_TEXTS = [
   "Boraaaa 💙🧡",
   "🧡💙🦡",
   "🦡",
-  "🦎🦡",
-  "🦎🤝🦡",
-  "🦎🦡🧡💙",
-  "🦎🤝🦡🧡💙",
+  "🦡",
+  "🤝🦡",
+  "🦡🧡💙",
+  "🤝🦡🧡💙",
   "💙🧡🔥",
   "🧡💙🔥",
   "🦡🔥",
-  "🦎🔥",
-  "🦎🦡🔥",
+  "🔥",
+  "🦡🔥",
   "💙🦡🧡",
-  "🧡🦎💙",
+  "🧡💙",
   "🦡💙🧡",
-  "🦎💙🧡",
-  "🦎🤝🦡🔥",
+  "💙🧡",
+  "🤝🦡🔥",
   "Boraaaa 🔥",
   "Boraaaa 🦡",
-  "Boraaaa 🦎🦡",
+  "Boraaaa 🦡",
   "Boraaaa 🧡💙🔥",
   "Pra cima! 💙🧡",
-  "Pra cima! 🦎🦡",
+  "Pra cima! 🦡",
   "Vamo 🦡🔥",
-  "Juntos🦎🤝🦡",
 ];
 
 export const GIF_SEARCH_TERMS = [

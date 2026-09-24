@@ -238,3 +238,48 @@ test("carrega comentários após rolar a lista principal e encontrar controle al
     await browser.close();
   }
 });
+
+test("continua rolando quando a próxima página exige vários eventos de scroll", async (t) => {
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+  } catch (error) {
+    t.skip(`Chromium indisponível: ${error.message}`);
+    return;
+  }
+
+  const context = await browser.newContext();
+  await context.addCookies([{
+    name: "sessionid", value: "synthetic-test-session",
+    domain: ".instagram.com", path: "/", expires: -1,
+  }]);
+  const page = await context.newPage();
+  try {
+    await page.setContent(`<main><div id="comments" style="height:100px;overflow-y:auto">
+      <div style="height:400px">
+        <a href="/pedro/">pedro</a>
+        <a href="/p/post/c/first/"><time>agora</time></a>
+        <button>Responder</button>
+      </div>
+    </div></main>`);
+    await page.evaluate(() => {
+      const panel = document.querySelector("#comments");
+      let scrolls = 0;
+      panel.addEventListener("scroll", () => {
+        scrolls += 1;
+        if (scrolls === 4) {
+          panel.insertAdjacentHTML("beforeend", `<div>
+            <a href="/maria/">maria</a>
+            <a href="/p/post/c/next/"><time>agora</time></a>
+            <button>Responder</button>
+          </div>`);
+        }
+      });
+    });
+
+    const known = new Set((await findLoadedComments(page)).map((comment) => comment.key));
+    assert.equal(await loadMoreComments(page, known), 1);
+  } finally {
+    await browser.close();
+  }
+});

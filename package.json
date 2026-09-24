@@ -12,6 +12,8 @@
     "node": ">=20"
   },
   "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "chart.js": "^4.5.1",
     "dotenv": "^18.0.2",
     "playwright": "^1.55.0"
   }

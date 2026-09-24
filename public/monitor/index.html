@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Savannator — Monitor de Comentários</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script defer src="/chart.js"></script>
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div><span class="eyebrow">MONITORAMENTO EM TEMPO REAL</span><h1>Savannator — Monitor de Comentários</h1>
+        <p>Acompanhe a disputa entre os dois posts, com histórico real e projeções cautelosas.</p></div>
+      <span id="connection" class="connection">Conectando…</span>
+    </header>
+    <section class="cards" aria-label="Métricas">
+      <article class="card target"><div class="card-head"><a id="target-link" href="#" target="_blank" rel="noopener noreferrer">REALEZA</a><span class="dot"></span></div><strong id="target-count">—</strong><span class="unit">comentários</span><p id="target-delta">Última medição: —</p><p id="target-rate">Ritmo recente: —</p></article>
+      <article class="card rival"><div class="card-head"><a id="rival-link" href="#" target="_blank" rel="noopener noreferrer">CACIQUE</a><span class="dot"></span></div><strong id="rival-count">—</strong><span class="unit">comentários</span><p id="rival-delta">Última medição: —</p><p id="rival-rate">Ritmo recente: —</p></article>
+      <article class="card"><div class="card-head"><span>DIFERENÇA</span></div><strong id="gap">—</strong><span id="leader" class="unit">Aguardando dados</span></article>
+      <article class="card"><div class="card-head"><span>TENDÊNCIA</span></div><strong id="trend">—</strong><span class="unit">comentários de diferença/h</span></article>
+      <article class="card forecast"><div class="card-head"><span>ULTRAPASSAGEM</span></div><strong id="forecast">—</strong><span id="forecast-at" class="unit"></span></article>
+    </section>
+    <section class="chart-panel">
+      <div class="section-head"><div><span class="eyebrow">EVOLUÇÃO</span><h2>Comentários ao longo do tempo</h2></div>
+        <div class="ranges" aria-label="Período do gráfico"><button data-range="24">24h</button><button data-range="48" class="active">48h</button><button data-range="168">7 dias</button><button data-range="all">Tudo</button></div>
+      </div>
+      <div class="chart-wrap"><canvas id="history-chart" aria-label="Histórico de comentários" role="img"></canvas></div>
+      <div class="legend-note"><span class="solid-line"></span> histórico medido <span class="dashed-line"></span> projeção, quando válida</div>
+    </section>
+    <footer class="status"><span id="last-update">Última atualização: —</span><span id="next-check">Próxima coleta: —</span><span id="end-at">Encerramento: —</span><span id="error" class="error" hidden></span></footer>
+  </main>
+</body>
+</html>

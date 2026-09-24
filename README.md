@@ -1,6 +1,53 @@
 # Savanna Bot
 
-Projeto em Node.js com dois modos independentes: a automação existente via Playwright para publicar comentários em um post configurado e um modo para responder comentários. O modo reply pode usar a API oficial ou uma sessão do navegador.
+Projeto em Node.js com modos independentes para comentar, responder comentários e monitorar a quantidade total de comentários de dois posts. O modo reply pode usar a API oficial ou uma sessão do navegador.
+
+## Monitor de comentários
+
+```bash
+npm start -- --mode monitor --profile monitor
+```
+
+Dashboard: <http://127.0.0.1:3210>. Use `--show` para manter o navegador visível. O primeiro login é manual, como nos modos que usam Playwright; a sessão permanece em `profiles/monitor`. O monitor coleta Realeza (target) e Cacique (rival) na inicialização quando a última comparação completa já venceu, depois a cada hora. Se reiniciar antes do próximo horário, aguarda o intervalo restante sem duplicar o ponto.
+
+`TARGET_POST` é o post da Realeza em `config.js` e vale para os modos comentar, responder e monitorar. O rival é o post da Cacique; `MONITOR_RIVAL_POST` só aceita essa URL para impedir que medições de outro post entrem na pasta da Cacique. Configure intervalo, porta e encerramento no `.env` caso necessário:
+
+```dotenv
+MONITOR_RIVAL_POST=https://www.instagram.com/p/Ddg4srKxvVb/
+MONITOR_INTERVAL_MS=3600000
+MONITOR_PORT=3210
+MONITOR_END_AT=2026-09-25T23:59:00-03:00
+```
+
+As métricas ficam em `metrics/calango/`, `metrics/cacique/` e `metrics/realeza/`. Cada pasta tem `post.json` com a identidade do post e `checks.ndjson` com horário UTC, contagem exata e método de extração. A Calango (`DdhsVOdTe42`) é o antigo target; suas medições e as da Cacique foram copiadas do banco legado. `state/comment-monitor.sqlite` permanece intacto como arquivo histórico. A Realeza (`Ddg2rfCx8rn`) começa sua própria série sem receber contagens da Calango.
+
+Em uma instalação que ainda tenha o monitor antigo, pare-o antes de executar `node scripts/migrate-monitor-metrics.js`. O comando pode ser repetido sem duplicar linhas e não modifica o SQLite de origem.
+
+As duas leituras novas são sequenciais; se uma leitura falhar, não há comparação nova. O painel só calcula diferença, tendência e previsão com horários presentes nas séries da Realeza e da Cacique. O gráfico mostra toda a série individual da Cacique, incluindo medições anteriores à troca, e a série própria da Realeza. Uma escrita interrompida pode deixar uma observação isolada em uma pasta; ela não entra na comparação. A falha aparece no dashboard e a tentativa seguinte ocorre em cinco minutos ou após o cooldown informado pelo Instagram. O gráfico permite 24h, 48h, 7 dias e todo o histórico; novas amostras chegam por SSE sem recarregar a página.
+
+`metrics/` não está no `.gitignore`; as medições ficam disponíveis para commits manuais. O monitor não executa comandos Git. Para versionar os dados após conferir as novas linhas:
+
+```bash
+git status --short metrics/
+git add -- metrics/calango metrics/cacique metrics/realeza
+git diff --cached -- metrics/
+git commit -m "data: update post comment metrics"
+```
+
+A extração procura o contador **total** em controles visíveis como “View all X comments”/“Ver todos os X comentários”, rótulos `aria-label`, metadados, JSON-LD e dados de hidratação da própria página. Nos dados de hidratação, só aceita `comment_count` inteiro associado ao shortcode exato do post visitado. Não conta elementos de comentário nem pagina comentários. Formatos inteiros com separadores de milhares são aceitos; valores abreviados como `47.5K` e `47,5 mil` são rejeitados.
+
+O ritmo recente usa a mediana das inclinações entre pares de amostras das últimas 12 horas (Theil-Sen). A previsão pode surgir a partir de **quatro amostras** nas últimas 12 horas. Ela exige tendência de fechamento do gap nas janelas de 12 e 24 horas e nas últimas três amostras; taxa de pelo menos um comentário de diferença por hora; e ritmos compatíveis entre as janelas (razão entre 0,5 e 2). A mediana dos desvios das variações entre coletas não pode superar duas vezes a taxa estimada. A ultrapassagem precisa estar no futuro, em até 48 horas e **antes do encerramento da competição**, 25/09/2026 às 23:59 no horário de São Paulo (configurável por `MONITOR_END_AT`). O painel distingue dados insuficientes, ausência de tendência, estimativa instável, cruzamento após o encerramento e competição encerrada. A linha tracejada aparece somente quando a previsão passa esses critérios.
+
+Para rodar junto com o commenter, use diretórios de profile diferentes:
+
+```bash
+# Terminal 1
+npm start -- --mode comment --profile atletica
+# Terminal 2
+npm start -- --mode monitor --profile monitor
+```
+
+Os dois profiles podem estar logados na mesma conta, mas não podem compartilhar o mesmo diretório simultaneamente; o lock existente impede isso.
 
 ## Instalação
 
@@ -16,7 +63,7 @@ npx playwright install chromium
 Edite [`config.js`](./config.js) antes de executar:
 
 ```js
-export const TARGET_POST = "https://www.instagram.com/p/DdQepCPEauI/";
+export const TARGET_POST = "https://www.instagram.com/p/Ddg2rfCx8rn/";
 export const INTERVAL_MS = 120_000;
 export const ACTION_LIMIT = 5;
 export const RATE_LIMIT_FALLBACK_MS = 15 * 60 * 1000;
@@ -24,7 +71,7 @@ export const COMMENT_TEXTS = ["👏", "🔥", "Muito bom!", "Boraaaa "];
 export const GIF_SEARCH_TERMS = ["party", "celebration", "dance", "funny"];
 ```
 
-O target é sempre esse valor hardcoded; não há argumento de CLI para alterá-lo. `TARGET_POST` é usado pelos dois modos. As demais configurações desse arquivo continuam sendo usadas pelo modo comentário. `ACTION_LIMIT` limita o número de tentativas agendadas, inclusive as que falharem, evitando execução infinita.
+O target é sempre esse valor hardcoded; não há argumento de CLI para alterá-lo. `TARGET_POST` é usado pelos três modos. As demais configurações desse arquivo continuam sendo usadas pelo modo comentário. `ACTION_LIMIT` limita o número de tentativas agendadas, inclusive as que falharem, evitando execução infinita.
 
 ## Modo comentário
 
@@ -79,7 +126,7 @@ npm start -- --profile pedro
 npm start -- --profile pedro
 ```
 
-Cada perfil usa um lock em `profiles/<perfil>/.bot.lock`. Locks cujo processo não existe mais são removidos automaticamente. `Ctrl+C` e `SIGTERM` fecham o Chromium e removem o lock.
+Cada perfil usa um lock em `profiles/<perfil>/.bot.lock`. Locks cujo processo não existe mais são removidos automaticamente. No Windows, o bot também remove um lock antigo quando o PID foi reutilizado por outro processo. `Ctrl+C` e `SIGTERM` fecham o Chromium e removem o lock.
 
 ## Ação atual
 

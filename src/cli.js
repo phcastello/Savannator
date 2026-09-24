@@ -1,5 +1,5 @@
 const PROFILE_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
-const VALID_MODES = new Set(["comment", "reply"]);
+const VALID_MODES = new Set(["comment", "reply", "monitor"]);
 const VALID_REPLY_DRIVERS = new Set(["api", "browser"]);
 
 export function printUsage() {
@@ -10,6 +10,7 @@ export function printUsage() {
       "npm start -- --mode comment --profile <nome> [--show]",
       "npm start -- --mode reply [--reply-driver api]",
       "npm start -- --mode reply --reply-driver browser --profile <nome> [--show]",
+      "npm start -- --mode monitor --profile <nome> [--show]",
     ].join("\n"),
   );
 }
@@ -32,7 +33,7 @@ export function parseCliArgs(args) {
       index += 1;
 
       if (!mode || mode.startsWith("--")) {
-        throw new Error("Informe comment ou reply depois de --mode.");
+        throw new Error("Informe comment, reply ou monitor depois de --mode.");
       }
       continue;
     }
@@ -111,20 +112,20 @@ export function parseCliArgs(args) {
   mode ??= "comment";
 
   if (!VALID_MODES.has(mode)) {
-    throw new Error('Modo inválido. Use apenas "comment" ou "reply".');
+    throw new Error('Modo inválido. Use apenas "comment", "reply" ou "monitor".');
   }
 
   if (replyDriver !== undefined && !VALID_REPLY_DRIVERS.has(replyDriver)) {
     throw new Error('Reply driver inválido. Use apenas "api" ou "browser".');
   }
 
-  if (mode === "comment" && replyDriver !== undefined) {
+  if (mode !== "reply" && replyDriver !== undefined) {
     throw new Error(
       "O argumento --reply-driver só pode ser usado no modo reply.",
     );
   }
 
-  if (mode === "comment" && !profile) {
+  if ((mode === "comment" || mode === "monitor") && !profile) {
     throw new Error("O argumento --profile é obrigatório.");
   }
 

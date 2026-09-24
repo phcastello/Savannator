@@ -773,6 +773,7 @@ export async function loadMoreComments(
   }
 
   const deadline = Date.now() + 5_000;
+  let lastScrollAt = Date.now();
   while (Date.now() < deadline && !signal?.aborted) {
     await detectInstagramBlock(page);
     const loaded = await findLoadedComments(page);
@@ -780,12 +781,19 @@ export async function loadMoreComments(
       (comment) => !knownCommentKeys.has(comment.key),
     ).length;
     if (newCount > 0) return newCount;
-    if (!clickedLoadControl) {
-      loadControl = await findLoadCommentsControl(page);
-      if (loadControl) {
-        await loadControl.click();
-        clickedLoadControl = true;
+
+    // A lista pode precisar de mais de um scroll antes de pedir a próxima página.
+    // Também pode mostrar o botão de carregar só depois de chegar ao fim.
+    if (Date.now() - lastScrollAt >= 600) {
+      if (!clickedLoadControl) {
+        loadControl = await findLoadCommentsControl(page);
+        if (loadControl) {
+          await loadControl.click();
+          clickedLoadControl = true;
+        }
       }
+      if (!clickedLoadControl) await scrollCommentsContainer(page);
+      lastScrollAt = Date.now();
     }
     await wait(150, signal);
   }
@@ -974,7 +982,8 @@ export async function scanAndReplyToComments(
       } else {
         stalledLoadAttempts += 1;
         console.log(
-          `Nenhum comentário novo carregado (tentativa ${stalledLoadAttempts}/${MAX_STALLED_LOAD_ATTEMPTS}).`,
+          `Paginação sem progresso: nenhum comentário raiz adicional apareceu no DOM ` +
+          `(tentativa ${stalledLoadAttempts}/${MAX_STALLED_LOAD_ATTEMPTS}).`,
         );
       }
     }

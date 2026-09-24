@@ -347,6 +347,12 @@ async function main() {
   }
 
   try {
+    if (options.mode === "monitor") {
+      const { runMonitorMode } = await import("./monitor/monitor-mode.js");
+      await runMonitorMode(options);
+      return;
+    }
+
     if (options.mode === "reply") {
       if (options.replyDriver === "browser") {
         const { runBrowserReplyMode } = await import("./reply-browser-mode.js");
