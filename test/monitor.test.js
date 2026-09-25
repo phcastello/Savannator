@@ -33,6 +33,11 @@ test("CLI aceita monitor com profile e --show, rejeita driver reply", () => {
   assert.throws(() => parseCliArgs(["--mode", "monitor", "--profile", "monitor", "--reply-driver", "api"]), /--reply-driver/);
 });
 
+test("monitor usa intervalo padrão de 20 minutos e aceita configuração personalizada", () => {
+  assert.equal(loadMonitorConfig({}).intervalMs, 20 * 60_000);
+  assert.equal(loadMonitorConfig({ MONITOR_INTERVAL_MS: "600000" }).intervalMs, 600_000);
+});
+
 test("parsing aceita separadores de milhar e rejeita aproximações", () => {
   assert.equal(parseCommentCount("View all 47,535 comments"), 47_535);
   assert.equal(parseCommentCount("Ver todos os 47.535 comentários"), 47_535);

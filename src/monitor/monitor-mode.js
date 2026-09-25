@@ -28,7 +28,7 @@ function postUrl(value, name) {
 }
 
 export function loadMonitorConfig(env = process.env) {
-  const intervalMs = Number(env.MONITOR_INTERVAL_MS ?? 3_600_000);
+  const intervalMs = Number(env.MONITOR_INTERVAL_MS ?? 1_200_000);
   const port = Number(env.MONITOR_PORT ?? 3210);
   const endAt = env.MONITOR_END_AT ?? DEFAULT_COMPETITION_END_AT;
   if (!Number.isSafeInteger(intervalMs) || intervalMs <= 0) throw new Error("MONITOR_INTERVAL_MS deve ser um inteiro positivo.");
